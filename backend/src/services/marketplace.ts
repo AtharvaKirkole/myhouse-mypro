@@ -1,11 +1,15 @@
-/* Marketplace Service — structured jobs, bids, acceptance → escrow hold. */
+/* Marketplace Service — structured jobs, bids, acceptance → escrow hold.
+   Robustness: explicit state machine, optimistic locking, duplicate-bid
+   detection, ownership verification, fraud hooks, full audit trail. */
 
 import { Router } from "express";
-import { HttpError, service } from "../core/http";
-import { requireHomePermission } from "../core/rbac";
+import { service, idempotency } from "../core/http";
+import { ConflictError, ForbiddenError, NotFoundError } from "../core/errors";
+import { authorize } from "../core/rbac";
 import { publish } from "../core/events";
 import { audit, requireAuth } from "./auth";
-import { db, now, uid } from "../db/store";
+import { validate, JobCreateSchema, BidCreateSchema, AcceptBidSchema } from "../core/validate";
+import { db, now, touch, uid, type JobRow } from "../db/store";
 import { createHold } from "./payments";
 
 const CATEGORY_WORDS: [string, string[]][] = [
@@ -22,28 +26,61 @@ export function structureJob(description: string): { title: string; category: st
   return { title: `${category} — ${description.slice(0, 48)}`, category, urgency };
 }
 
+/* explicit job state machine — the only legal transitions */
+const TRANSITIONS: Record<JobRow["status"], JobRow["status"][]> = {
+  open: ["accepted", "cancelled"],
+  accepted: ["completed", "cancelled"],
+  completed: [],
+  cancelled: [],
+};
+
+function transition(job: JobRow, to: JobRow["status"], expectedVersion?: number) {
+  if (!TRANSITIONS[job.status].includes(to)) {
+    throw new ConflictError("invalid_transition", `${job.status} → ${to} is not allowed`);
+  }
+  touch(job, expectedVersion); // optimistic locking
+  job.status = to;
+}
+
+/** fraud hook — velocity/duplicate/risk scoring plugs in here */
+export function fraudCheck(_kind: "job" | "bid", _payload: Record<string, unknown>): { ok: boolean; reason?: string } {
+  return { ok: true };
+}
+
 export const marketplaceRouter = Router();
 marketplaceRouter.use(service("marketplace"), requireAuth);
 
 marketplaceRouter.post(
   "/homes/:homeId/jobs",
-  requireHomePermission("job:create", (req) => req.params.homeId),
+  authorize("create", "job", (req) => req.params.homeId),
+  validate(JobCreateSchema),
+  idempotency,
   (req, res) => {
-    const { description } = req.body ?? {};
-    if (!description) throw new HttpError(400, "missing_description");
+    const { description } = req.body;
     const s = structureJob(description);
-    const job = {
+
+    // duplicate detection: identical open job on the same home
+    const dup = db.data.jobs.find(
+      (j) => j.homeId === req.params.homeId && j.status === "open" && j.description === description
+    );
+    if (dup) throw new ConflictError("duplicate_job", "an identical open job already exists");
+
+    const fraud = fraudCheck("job", { userId: req.userId, description });
+    if (!fraud.ok) throw new ForbiddenError("fraud_suspected", fraud.reason);
+
+    const job: JobRow = {
       id: uid("job"),
       homeId: req.params.homeId,
       createdBy: req.userId!,
       ...s,
       description,
-      status: "open" as const,
+      status: "open",
       createdAt: now(),
+      version: 1,
     };
     db.data.jobs.push(job);
     db.persist();
-    audit(req, "job.create", job.id);
+    audit(req, "job.create", job.id, { after: { category: job.category, urgency: job.urgency } });
     publish("job.created", { jobId: job.id, category: job.category, urgency: job.urgency });
     res.status(201).json(job);
   }
@@ -52,59 +89,66 @@ marketplaceRouter.post(
 /* pro job feed: open jobs (filtered by the pro's professions when set) */
 marketplaceRouter.get("/jobs/feed", (req, res) => {
   const me = db.data.users.find((u) => u.id === req.userId);
-  if (me?.accountType !== "pro") throw new HttpError(403, "pros_only");
+  if (me?.accountType !== "pro") throw new ForbiddenError("pros_only");
   const professions = me.proProfile?.professions ?? [];
   const open = db.data.jobs.filter((j) => j.status === "open");
   const matched = professions.length
-    ? open.filter((j) => professions.some((p) => j.category.toLowerCase().includes(p.toLowerCase().replace("plumber", "plumbing"))))
+    ? open.filter((j) =>
+        professions.some((p) => j.category.toLowerCase().includes(p.toLowerCase().replace("plumber", "plumbing")))
+      )
     : open;
   res.json(matched.length ? matched : open);
 });
 
-marketplaceRouter.post("/jobs/:jobId/bids", (req, res) => {
+marketplaceRouter.post("/jobs/:jobId/bids", validate(BidCreateSchema), idempotency, (req, res) => {
   const me = db.data.users.find((u) => u.id === req.userId);
-  if (me?.accountType !== "pro") throw new HttpError(403, "pros_only");
+  if (me?.accountType !== "pro") throw new ForbiddenError("pros_only");
   const job = db.data.jobs.find((j) => j.id === req.params.jobId);
-  if (!job || job.status !== "open") throw new HttpError(404, "job_not_open");
-  const { price, etaLabel = "This week", warranty = "1 year" } = req.body ?? {};
-  if (!price || price <= 0) throw new HttpError(400, "invalid_price");
+  if (!job || job.status !== "open") throw new NotFoundError("job_not_open");
+  if (db.data.bids.some((b) => b.jobId === job.id && b.proUserId === me.id)) {
+    throw new ConflictError("already_bid", "you already have a bid on this job");
+  }
+  const { price, etaLabel, warranty } = req.body;
   const bid = { id: uid("bid"), jobId: job.id, proUserId: me.id, price, etaLabel, warranty, createdAt: now() };
   db.data.bids.push(bid);
   db.persist();
+  audit(req, "bid.place", bid.id, { after: { jobId: job.id, price } });
   publish("bid.placed", { jobId: job.id, bidId: bid.id, userId: job.createdBy, price });
   res.status(201).json(bid);
 });
 
 marketplaceRouter.get("/jobs/:jobId/bids", (req, res) => {
   const job = db.data.jobs.find((j) => j.id === req.params.jobId);
-  if (!job) throw new HttpError(404, "not_found");
-  if (job.createdBy !== req.userId) throw new HttpError(403, "forbidden");
+  // ownership check first, 404 for non-owners — no bid data leaks across tenants
+  if (!job || job.createdBy !== req.userId) throw new NotFoundError();
   res.json(db.data.bids.filter((b) => b.jobId === job.id));
 });
 
-marketplaceRouter.post("/bids/:bidId/accept", (req, res) => {
+/* acceptance is transactional: state change + escrow hold succeed or fail together */
+marketplaceRouter.post("/bids/:bidId/accept", validate(AcceptBidSchema), idempotency, (req, res) => {
   const bid = db.data.bids.find((b) => b.id === req.params.bidId);
-  if (!bid) throw new HttpError(404, "not_found");
+  if (!bid) throw new NotFoundError();
   const job = db.data.jobs.find((j) => j.id === bid.jobId);
-  if (!job || job.status !== "open") throw new HttpError(409, "job_not_open");
-  if (job.createdBy !== req.userId) throw new HttpError(403, "forbidden");
+  if (!job || job.createdBy !== req.userId) throw new NotFoundError();
 
-  job.status = "accepted";
-  job.acceptedBidId = bid.id;
-  const payment = createHold(job.id, req.userId!, bid.proUserId, Math.round(bid.price * 100));
-  db.persist();
-  audit(req, "bid.accept", bid.id);
+  const result = db.withTx(() => {
+    transition(job, "accepted", req.body.jobVersion);
+    job.acceptedBidId = bid.id;
+    const payment = createHold(job.id, req.userId!, bid.proUserId, Math.round(bid.price * 100), req.requestId);
+    return { job, payment };
+  });
+
+  audit(req, "bid.accept", bid.id, { after: { jobId: job.id, amountCents: result.payment.amountCents } });
   publish("bid.accepted", { jobId: job.id, bidId: bid.id, proUserId: bid.proUserId, homeownerId: req.userId });
-  res.json({ job, payment });
+  res.json(result);
 });
 
-marketplaceRouter.post("/jobs/:jobId/complete", (req, res) => {
+marketplaceRouter.post("/jobs/:jobId/complete", idempotency, (req, res) => {
   const job = db.data.jobs.find((j) => j.id === req.params.jobId);
-  if (!job) throw new HttpError(404, "not_found");
-  if (job.createdBy !== req.userId) throw new HttpError(403, "forbidden");
-  if (job.status !== "accepted") throw new HttpError(409, "not_in_progress");
-  job.status = "completed";
+  if (!job || job.createdBy !== req.userId) throw new NotFoundError();
+  transition(job, "completed");
   db.persist();
+  audit(req, "job.complete", job.id);
   publish("job.completed", { jobId: job.id });
   res.json(job);
 });

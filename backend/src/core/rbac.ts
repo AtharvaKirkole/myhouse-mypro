@@ -1,75 +1,158 @@
 /*
- * RBAC: Role → Permission → Resource. Nothing hardcoded at call sites —
- * services ask `can(role, permission)` or use `requireHomePermission(...)`.
+ * Enterprise RBAC: Role → Permission → Resource → Action, evaluated by a
+ * single policy engine. Services never scatter permission checks — they mount
+ * `authorize(action, resource, homeIdFrom)` middleware.
+ *
+ * Tenant isolation lives here too: the home is the tenant boundary. A caller
+ * who is not a member of the target home receives 404 (never 403) so that
+ * home ids cannot be probed for existence (IDOR / BOLA defense). Ids are
+ * UUID-based, so sequential guessing is also impossible.
  */
 
 import type { NextFunction, Request, Response } from "express";
 import { db } from "../db/store";
-import { HttpError } from "./http";
+import { ForbiddenError, NotFoundError, UnauthorizedError } from "./errors";
 
-export type Permission =
-  | "home:view"
-  | "home:edit"
-  | "home:delete"
-  | "asset:view"
-  | "asset:create"
-  | "asset:edit"
-  | "asset:delete"
-  | "warranty:view"
-  | "warranty:manage"
-  | "utilities:view"
-  | "family:manage"
-  | "job:create"
-  | "job:view"
-  | "payment:manage"
-  | "audit:view"
-  | "chores:view"
-  | "emergency:view";
+export type Action = "view" | "create" | "edit" | "delete" | "manage";
+export type Resource =
+  "home" | "asset" | "warranty" | "utilities" | "family" | "job" | "payment" | "audit" | "chores" | "emergency";
 
-export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
-  owner: [
-    "home:view", "home:edit", "home:delete",
-    "asset:view", "asset:create", "asset:edit", "asset:delete",
-    "warranty:view", "warranty:manage", "utilities:view",
-    "family:manage", "job:create", "job:view",
-    "payment:manage", "audit:view", "chores:view", "emergency:view",
-  ],
-  co_owner: [
-    "home:view", "home:edit",
-    "asset:view", "asset:create", "asset:edit", "asset:delete",
-    "warranty:view", "warranty:manage", "utilities:view",
-    "family:manage", "job:create", "job:view",
-    "payment:manage", "chores:view", "emergency:view",
-  ],
-  roommate: ["home:view", "asset:view", "utilities:view", "job:create", "job:view", "emergency:view"],
-  tenant: ["home:view", "asset:view", "utilities:view", "job:create", "job:view", "emergency:view"],
-  child: ["home:view", "chores:view", "emergency:view"],
-  guest: ["emergency:view"],
-  property_manager: [
-    "home:view", "home:edit", "asset:view", "asset:create", "asset:edit",
-    "warranty:view", "utilities:view", "job:create", "job:view", "payment:manage",
-  ],
+type Policy = Partial<Record<Resource, Action[]>>;
+
+const FULL: Action[] = ["view", "create", "edit", "delete", "manage"];
+const READ: Action[] = ["view"];
+
+export const POLICIES: Record<string, Policy> = {
+  admin: Object.fromEntries(
+    (
+      [
+        "home",
+        "asset",
+        "warranty",
+        "utilities",
+        "family",
+        "job",
+        "payment",
+        "audit",
+        "chores",
+        "emergency",
+      ] as Resource[]
+    ).map((r) => [r, FULL])
+  ),
+  owner: {
+    home: FULL,
+    asset: FULL,
+    warranty: ["view", "create", "edit", "delete", "manage"],
+    utilities: READ,
+    family: ["view", "manage"],
+    job: ["view", "create", "edit", "manage"],
+    payment: ["view", "manage"],
+    audit: READ,
+    chores: ["view", "manage"],
+    emergency: READ,
+  },
+  co_owner: {
+    home: ["view", "edit"],
+    asset: FULL,
+    warranty: ["view", "create", "edit", "manage"],
+    utilities: READ,
+    family: ["view", "manage"],
+    job: ["view", "create", "edit", "manage"],
+    payment: ["view", "manage"],
+    chores: ["view", "manage"],
+    emergency: READ,
+  },
+  property_manager: {
+    home: ["view", "edit"],
+    asset: ["view", "create", "edit"],
+    warranty: READ,
+    utilities: READ,
+    job: ["view", "create", "edit", "manage"],
+    payment: ["view", "manage"],
+    emergency: READ,
+  },
+  roommate: {
+    home: READ,
+    asset: READ,
+    utilities: READ, // roommates share bills…
+    job: ["view", "create"],
+    emergency: READ,
+    // …but warranties (financial documents) are deliberately absent
+  },
+  tenant: {
+    home: READ,
+    asset: READ,
+    utilities: READ,
+    job: ["view", "create"],
+    emergency: READ,
+  },
+  child: {
+    home: READ,
+    chores: READ,
+    emergency: READ,
+  },
+  /** contractor: temporary scoped access — membership rows carry expiresAt */
+  contractor: {
+    job: READ,
+    asset: READ,
+    emergency: READ,
+  },
+  /** guest: strictly read-only, emergency info only */
+  guest: {
+    emergency: READ,
+  },
 };
 
-export function can(role: string, permission: Permission): boolean {
-  return (ROLE_PERMISSIONS[role] ?? []).includes(permission);
+export function canAct(role: string, action: Action, resource: Resource): boolean {
+  return (POLICIES[role]?.[resource] ?? []).includes(action);
 }
 
+/** Back-compat string form: "asset:create" → (asset, create). */
+export type Permission = `${Resource}:${Action | "manage"}` | string;
+
+export function can(role: string, permission: Permission): boolean {
+  const [resource, action] = permission.split(":") as [Resource, Action];
+  if (!resource || !action) return false;
+  return canAct(role, action, resource);
+}
+
+/** Resolves the caller's role in a home. Expired memberships don't count. */
 export function roleInHome(userId: string, homeId: string): string | null {
   const m = db.data.members.find((x) => x.homeId === homeId && x.userId === userId);
-  return m?.role ?? null;
+  if (!m) return null;
+  if (m.expiresAt && m.expiresAt < new Date().toISOString()) return null; // contractor/guest expiry
+  return m.role;
 }
 
-/** Express guard: resolves the caller's role in the target home, checks the permission. */
-export function requireHomePermission(permission: Permission, homeIdFrom: (req: Request) => string) {
+/**
+ * Policy middleware — the only authorization gate in the codebase.
+ * Order of checks: authenticated → home exists & caller is a member (404
+ * otherwise, tenant isolation) → role allows action on resource (403).
+ */
+export function authorize(action: Action, resource: Resource, homeIdFrom: (req: Request) => string) {
   return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.userId) return next(new UnauthorizedError());
     const homeId = homeIdFrom(req);
-    if (!req.userId) throw new HttpError(401, "unauthenticated");
-    const role = roleInHome(req.userId, homeId);
-    if (!role) throw new HttpError(403, "not_a_member", "You are not a member of this home");
-    if (!can(role, permission)) {
-      throw new HttpError(403, "forbidden", `Role '${role}' lacks '${permission}'`);
+    req.houseId = homeId;
+
+    const user = db.data.users.find((u) => u.id === req.userId);
+    if (user?.isAdmin) return next(); // admin: full access
+
+    const home = db.data.homes.find((h) => h.id === homeId && !h.deletedAt);
+    const role = home ? roleInHome(req.userId, homeId) : null;
+    if (!home || !role) {
+      // non-member and nonexistent look identical — no existence oracle
+      return next(new NotFoundError("not_found"));
+    }
+    if (!canAct(role, action, resource)) {
+      return next(new ForbiddenError("forbidden", `Role '${role}' may not ${action} ${resource}`));
     }
     next();
   };
+}
+
+/** Back-compat wrapper: "asset:create" string form. */
+export function requireHomePermission(permission: Permission, homeIdFrom: (req: Request) => string) {
+  const [resource, action] = permission.split(":") as [Resource, Action];
+  return authorize(action, resource, homeIdFrom);
 }

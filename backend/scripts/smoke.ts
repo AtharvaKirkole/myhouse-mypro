@@ -18,8 +18,14 @@ const server = app.listen(0);
 const port = (server.address() as { port: number }).port;
 const base = `http://127.0.0.1:${port}`;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function call(method: string, path: string, body?: unknown, token?: string): Promise<{ status: number; json: any }> {
+/* smoke test walks loosely-typed API responses; `any` is intentional here and
+   permitted for scripts/** by the eslint override */
+async function call(
+  method: string,
+  path: string,
+  body?: unknown,
+  token?: string
+): Promise<{ status: number; json: any }> {
   const res = await fetch(base + path, {
     method,
     headers: {
@@ -41,7 +47,11 @@ function check(name: string, ok: boolean, detail = "") {
 const health = await call("GET", "/health");
 check("health", health.status === 200);
 
-const signup = await call("POST", "/api/auth/signup", { email: "smoke@test.com", password: "password123", name: "Smoke" });
+const signup = await call("POST", "/api/auth/signup", {
+  email: "smoke@test.com",
+  password: "Str0ng!Pass-2026",
+  name: "Smoke",
+});
 check("signup", signup.status === 201);
 const token = signup.json.access as string;
 
@@ -49,20 +59,42 @@ const home = await call("POST", "/api/users/homes", { address: "99 Smoke St" }, 
 check("create home", home.status === 201);
 
 const extract = await call("POST", "/api/ai/extract", { filenames: ["lg-tv-receipt.pdf"] }, token);
-check("ai extraction", extract.status === 200 && extract.json.brand === "LG", `brand=${extract.json.brand} conf=${extract.json.confidence}`);
+check(
+  "ai extraction",
+  extract.status === 200 && extract.json.brand === "LG",
+  `brand=${extract.json.brand} conf=${extract.json.confidence}`
+);
 
-const asset = await call("POST", `/api/assets/homes/${home.json.id}/assets`, { name: extract.json.name, brand: extract.json.brand, model: extract.json.model }, token);
+const asset = await call(
+  "POST",
+  `/api/assets/homes/${home.json.id}/assets`,
+  { name: extract.json.name, brand: extract.json.brand, model: extract.json.model },
+  token
+);
 check("create asset", asset.status === 201);
 
-const job = await call("POST", `/api/marketplace/homes/${home.json.id}/jobs`, { description: "burst pipe flooding the laundry" }, token);
-check("structured job", job.status === 201 && job.json.category === "Plumbing" && job.json.urgency === "emergency", `${job.json.category}/${job.json.urgency}`);
+const job = await call(
+  "POST",
+  `/api/marketplace/homes/${home.json.id}/jobs`,
+  { description: "burst pipe flooding the laundry" },
+  token
+);
+check(
+  "structured job",
+  job.status === 201 && job.json.category === "Plumbing" && job.json.urgency === "emergency",
+  `${job.json.category}/${job.json.urgency}`
+);
 
 const search = await call("GET", "/api/search?q=lg", undefined, token);
 check("global search", search.status === 200 && search.json.hits.length > 0, `${search.json.hits.length} hits`);
 
 await flushEvents();
 const notifs = await call("GET", "/api/notifications", undefined, token);
-check("notifications from events", notifs.status === 200 && notifs.json.length >= 2, `${notifs.json.length} notifications`);
+check(
+  "notifications from events",
+  notifs.status === 200 && notifs.json.length >= 2,
+  `${notifs.json.length} notifications`
+);
 
 server.close();
 console.log(failures === 0 ? "\nSMOKE PASS" : `\nSMOKE FAIL (${failures})`);

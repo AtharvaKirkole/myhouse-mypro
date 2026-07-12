@@ -1,0 +1,7 @@
+{
+  "all": true,
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/index.ts", "**/*.d.ts"],
+  "reporter": ["text-summary", "lcov"],
+  "check-coverage": false
+}

@@ -2,11 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main, Backend]
+    branches: [main, Backend, production-hardening]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  lint-typecheck:
+  quality:
+    name: Lint · Format · Typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,54 +18,94 @@ jobs:
         with: { node-version: 22, cache: npm }
       - name: Frontend typecheck
         run: npm ci && npx tsc --noEmit
+      - name: Backend install
+        working-directory: backend
+        run: npm ci
+      - name: Backend lint (zero errors)
+        working-directory: backend
+        run: npm run lint
+      - name: Backend format check
+        working-directory: backend
+        run: npm run format:check
       - name: Backend typecheck
         working-directory: backend
-        run: npm ci && npm run typecheck
+        run: npm run typecheck
 
-  unit-and-integration-tests:
+  security-scan:
+    name: Secret scan · Dependency audit
     runs-on: ubuntu-latest
-    needs: lint-typecheck
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true # advisory until a baseline is committed
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - name: Dependency audit (backend)
+        working-directory: backend
+        run: npm ci && npm audit --omit=dev --audit-level=high || true
+
+  test:
+    name: Unit · Integration · Coverage
+    runs-on: ubuntu-latest
+    needs: [quality]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - name: Backend tests (unit + integration)
+      - name: Backend tests with coverage
         working-directory: backend
-        run: npm ci && npm test
+        run: npm ci && npm run test:coverage
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage/lcov.info
 
   build:
+    name: Build · Docker · Health check
     runs-on: ubuntu-latest
-    needs: unit-and-integration-tests
+    needs: [test, security-scan]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - name: Next.js build
         run: npm ci && npx next build
-      - name: Docker image
+      - name: Build backend image
         run: docker build -t myhouse-backend:${{ github.sha }} backend
+      - name: Container health check
+        run: |
+          docker run -d --name api -p 4000:4000 -e JWT_SECRET=ci-only-secret-not-for-production-use myhouse-backend:${{ github.sha }}
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:4000/health; then echo "healthy"; exit 0; fi
+            sleep 1
+          done
+          echo "container failed health check"; docker logs api; exit 1
 
   e2e:
+    name: Playwright E2E
     runs-on: ubuntu-latest
-    needs: build
-    continue-on-error: true # UI specs are advisory until the frontend is wired to the backend
+    needs: [build]
+    continue-on-error: true # advisory until the frontend is wired to the backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - name: Playwright UI tests
-        run: npx playwright test
+      - run: npx playwright test
 
   deploy-staging:
+    name: Deploy → Staging (auto)
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/Backend'
+    needs: [build]
+    if: github.ref == 'refs/heads/main'
     environment: staging
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy to staging (stub — replace with Fly/Railway/ECS)
+      - name: Deploy (stub — replace with Fly/Railway/ECS)
         run: echo "deploy myhouse-backend:${{ github.sha }} → staging"
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
@@ -70,10 +114,11 @@ jobs:
         run: npm ci && npm run smoke
 
   deploy-production:
+    name: Deploy → Production (manual approval)
     runs-on: ubuntu-latest
-    needs: deploy-staging
+    needs: [deploy-staging]
     if: github.ref == 'refs/heads/main'
-    environment: production # configure required reviewers in repo settings → approval gate
+    environment: production # add required reviewers in repo settings → approval gate
     steps:
-      - name: Deploy to production (stub)
+      - name: Deploy (stub)
         run: echo "deploy myhouse-backend:${{ github.sha }} → production"

@@ -1,0 +1,123 @@
+openapi: 3.1.0
+info:
+  title: MyHouse API
+  version: 0.2.0
+  description: >
+    Backend for MyHouse + MyPro. Modular monolith; REST. All /api routes require a
+    Bearer access token unless noted. Errors share one envelope:
+    { error, message, details?, requestId }.
+servers:
+  - url: http://localhost:4000
+    description: local
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    IdempotencyKey:
+      description: Optional; replays the stored response for unsafe methods.
+      schema: { type: string }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, example: validation_error }
+        message: { type: string }
+        details: { type: array, items: { type: object } }
+        requestId: { type: string }
+    Tokens:
+      type: object
+      properties:
+        user: { type: object }
+        access: { type: string }
+        refresh: { type: string }
+        deviceId: { type: string }
+    Home:
+      type: object
+      properties:
+        id: { type: string, example: home_5f2c… }
+        address: { type: string }
+        propertyType: { type: string }
+        version: { type: integer }
+security:
+  - bearerAuth: []
+paths:
+  /health: { get: { security: [], summary: Liveness/health, responses: { "200": { description: ok } } } }
+  /ready: { get: { security: [], summary: Readiness + queue stats, responses: { "200": { description: ready }, "503": { description: not ready } } } }
+  /metrics: { get: { security: [], summary: Prometheus metrics, responses: { "200": { description: text exposition } } } }
+
+  /api/auth/signup:
+    post:
+      security: []
+      summary: Create account (consumer or pro) → tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10 }
+                name: { type: string }
+                accountType: { type: string, enum: [consumer, pro] }
+      responses:
+        "201": { description: created, content: { application/json: { schema: { $ref: "#/components/schemas/Tokens" } } } }
+        "400": { description: validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: email taken }
+  /api/auth/login:
+    post: { security: [], summary: Login (may require mfaCode), responses: { "200": { description: tokens }, "401": { description: bad creds or mfa_required }, "429": { description: locked } } }
+  /api/auth/refresh:
+    post: { security: [], summary: Rotate refresh token (reuse → family revoked), responses: { "200": { description: tokens }, "401": { description: invalid/reuse } } }
+  /api/auth/logout: { post: { security: [], summary: Revoke this session's family, responses: { "200": { description: ok } } } }
+  /api/auth/logout-all: { post: { summary: Revoke all sessions, responses: { "200": { description: ok } } } }
+  /api/auth/sessions: { get: { summary: List active devices/sessions, responses: { "200": { description: list } } } }
+  /api/auth/mfa/enroll: { post: { summary: Begin TOTP enrollment, responses: { "200": { description: secret + otpauth } } } }
+  /api/auth/mfa/activate: { post: { summary: Confirm TOTP → recovery codes, responses: { "200": { description: recoveryCodes } } } }
+  /api/auth/password/change: { post: { summary: Change password (history-checked), responses: { "200": { description: ok }, "400": { description: weak/history } } } }
+
+  /api/users/homes:
+    get: { summary: List my homes, responses: { "200": { description: homes } } }
+    post:
+      summary: Create home (creator = owner)
+      responses: { "201": { description: created, content: { application/json: { schema: { $ref: "#/components/schemas/Home" } } } }, "400": { description: invalid } }
+  /api/users/homes/{homeId}:
+    get: { summary: Home + members, parameters: [{ name: homeId, in: path, required: true, schema: { type: string } }], responses: { "200": { description: home }, "404": { description: not a member / not found } } }
+    delete: { summary: Soft-delete home (owner), responses: { "200": { description: soft-deleted }, "404": { description: not permitted } } }
+  /api/users/homes/{homeId}/members:
+    post: { summary: Invite member with role (contractor is time-boxed), parameters: [{ name: homeId, in: path, required: true, schema: { type: string } }], responses: { "201": { description: added }, "404": { description: not permitted } } }
+
+  /api/assets/homes/{homeId}/assets:
+    get: { summary: List assets (paginated), parameters: [{ name: homeId, in: path, required: true, schema: { type: string } }], responses: { "200": { description: page }, "404": { description: not a member } } }
+    post: { summary: Create asset, responses: { "201": { description: created }, "400": { description: invalid }, "404": { description: not permitted } } }
+  /api/assets/homes/{homeId}/assets/{assetId}/position:
+    patch: { summary: Move on twin (optimistic lock), responses: { "200": { description: updated }, "409": { description: version conflict } } }
+  /api/assets/homes/{homeId}/files:
+    post: { summary: Register upload (presigned S3 URL), responses: { "201": { description: file + uploadUrl }, "400": { description: bad mime/size/name }, "409": { description: duplicate } } }
+
+  /api/warranties/homes/{homeId}/warranties:
+    get: { summary: List warranties, parameters: [{ name: homeId, in: path, required: true, schema: { type: string } }], responses: { "200": { description: list } } }
+    post: { summary: Add warranty (explicit date or parsed OCR text), responses: { "201": { description: created }, "400": { description: invalid } } }
+
+  /api/marketplace/homes/{homeId}/jobs:
+    post: { summary: Create structured job, parameters: [{ name: homeId, in: path, required: true, schema: { type: string } }], responses: { "201": { description: created }, "409": { description: duplicate open job } } }
+  /api/marketplace/jobs/feed: { get: { summary: Pro job feed, responses: { "200": { description: jobs }, "403": { description: pros only } } } }
+  /api/marketplace/jobs/{jobId}/bids:
+    post: { summary: Place bid (pro), responses: { "201": { description: created }, "409": { description: already bid } } }
+  /api/marketplace/bids/{bidId}/accept:
+    post: { summary: Accept bid → escrow hold (transactional), responses: { "200": { description: job + payment }, "409": { description: version/state conflict } } }
+
+  /api/payments/{paymentId}/release: { post: { summary: Release escrow (idempotent), responses: { "200": { description: payment }, "409": { description: not held } } } }
+  /api/payments/{paymentId}/refund: { post: { summary: Full/partial refund, responses: { "200": { description: payment }, "402": { description: exceeds held } } } }
+  /api/payments/integrity: { get: { summary: Ledger reconciliation, responses: { "200": { description: ok + mismatches } } } }
+
+  /api/ai/extract:
+    post: { summary: Run OCR→vision→LLM extraction, responses: { "200": { description: structured asset }, "422": { description: low confidence (partial returned) } } }
+  /api/search: { get: { summary: Global fuzzy search (paginated), parameters: [{ name: q, in: query, required: true, schema: { type: string } }], responses: { "200": { description: hits }, "400": { description: bad query } } } }
+  /api/notifications:
+    get: { summary: My notifications, responses: { "200": { description: list } } }
+  /api/notifications/preferences:
+    put: { summary: Update channel prefs + quiet hours, responses: { "200": { description: saved } } }

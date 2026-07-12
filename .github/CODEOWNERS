@@ -1,0 +1,12 @@
+# Default owners for everything
+*                       @AtharvaKirkole
+
+# Backend services & security-sensitive core
+/backend/src/services/  @AtharvaKirkole
+/backend/src/core/      @AtharvaKirkole
+/backend/docs/          @AtharvaKirkole
+
+# CI & infra
+/ci/                    @AtharvaKirkole
+/infra/                 @AtharvaKirkole
+/docker-compose.yml     @AtharvaKirkole

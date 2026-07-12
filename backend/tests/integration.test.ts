@@ -19,14 +19,13 @@ const app = createApp();
 
 let ownerToken = "";
 let proToken = "";
-let proId = "";
 let homeId = "";
 
 before(async () => {
   db.reset();
   const owner = await request(app)
     .post("/api/auth/signup")
-    .send({ email: "owner@test.com", password: "password123", name: "Olive Owner" });
+    .send({ email: "owner@test.com", password: "Str0ng!Pass-2026", name: "Olive Owner" });
   assert.equal(owner.status, 201);
   ownerToken = owner.body.access;
 
@@ -34,14 +33,21 @@ before(async () => {
     .post("/api/auth/signup")
     .send({
       email: "pro@test.com",
-      password: "password123",
+      password: "Str0ng!Pass-2026",
       name: "Pat Pro",
       accountType: "pro",
-      proProfile: { business: "Pat's Plumbing", professions: ["Plumber"], license: "ROC-1", insurance: "GL 2M", radiusMi: 15, baseCity: "Phoenix", emergency: true },
+      proProfile: {
+        business: "Pat's Plumbing",
+        professions: ["Plumber"],
+        license: "ROC-1",
+        insurance: "GL 2M",
+        radiusMi: 15,
+        baseCity: "Phoenix",
+        emergency: true,
+      },
     });
   assert.equal(pro.status, 201);
   proToken = pro.body.access;
-  proId = pro.body.user.id;
 
   const home = await request(app)
     .post("/api/users/homes")
@@ -74,14 +80,26 @@ test("receipt → AI extraction → asset + warranty → notification", async ()
   const asset = await request(app)
     .post(`/api/assets/homes/${homeId}/assets`)
     .set("Authorization", `Bearer ${ownerToken}`)
-    .send({ name: extract.body.name, brand: extract.body.brand, model: extract.body.model, category: extract.body.category, purchased: extract.body.purchased });
+    .send({
+      name: extract.body.name,
+      brand: extract.body.brand,
+      model: extract.body.model,
+      category: extract.body.category,
+      purchased: extract.body.purchased,
+    });
   assert.equal(asset.status, 201);
 
   // 4. save the warranty from parsed OCR text ("2 year warranty" + purchase date)
   const warranty = await request(app)
     .post(`/api/warranties/homes/${homeId}/warranties`)
     .set("Authorization", `Bearer ${ownerToken}`)
-    .send({ item: "Bosch dishwasher", ocrText: extract.body.warrantyText, purchaseDate: extract.body.purchased, assetId: asset.body.id, source: "receipt-ocr" });
+    .send({
+      item: "Bosch dishwasher",
+      ocrText: extract.body.warrantyText,
+      purchaseDate: extract.body.purchased,
+      assetId: asset.body.id,
+      source: "receipt-ocr",
+    });
   assert.equal(warranty.status, 201);
   assert.ok(warranty.body.expiresAt.startsWith("2024"));
 
@@ -89,7 +107,11 @@ test("receipt → AI extraction → asset + warranty → notification", async ()
   const expiring = await request(app)
     .post(`/api/warranties/homes/${homeId}/warranties`)
     .set("Authorization", `Bearer ${ownerToken}`)
-    .send({ item: "LG refrigerator extended", expiresAt: new Date(Date.now() + 20 * 864e5).toISOString(), source: "amazon-import" });
+    .send({
+      item: "LG refrigerator extended",
+      expiresAt: new Date(Date.now() + 20 * 864e5).toISOString(),
+      source: "amazon-import",
+    });
   assert.equal(expiring.status, 201);
 
   // 6. events drained → notifications exist
@@ -141,7 +163,7 @@ test("job → bid → accept → escrow → release payout", async () => {
 test("RBAC over HTTP: child cannot create assets", async () => {
   const kid = await request(app)
     .post("/api/auth/signup")
-    .send({ email: "kid@test.com", password: "password123", name: "Kid" });
+    .send({ email: "kid@test.com", password: "Str0ng!Pass-2026", name: "Kid" });
   await request(app)
     .post(`/api/users/homes/${homeId}/members`)
     .set("Authorization", `Bearer ${ownerToken}`)
@@ -163,7 +185,9 @@ test("global search finds asset, warranty, and job by one keyword", async () => 
 });
 
 test("refresh token rotation invalidates the old token", async () => {
-  const login = await request(app).post("/api/auth/login").send({ email: "owner@test.com", password: "password123" });
+  const login = await request(app)
+    .post("/api/auth/login")
+    .send({ email: "owner@test.com", password: "Str0ng!Pass-2026" });
   const first = login.body.refresh;
   const rotated = await request(app).post("/api/auth/refresh").send({ refresh: first });
   assert.equal(rotated.status, 200);

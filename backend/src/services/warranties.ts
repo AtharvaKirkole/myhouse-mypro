@@ -5,6 +5,7 @@ import { HttpError, service } from "../core/http";
 import { requireHomePermission } from "../core/rbac";
 import { publish } from "../core/events";
 import { requireAuth } from "./auth";
+import { validate, WarrantyCreateSchema } from "../core/validate";
 import { db, now, uid, type WarrantyRow } from "../db/store";
 
 /* ---------- warranty text parser (unit-tested) ----------
@@ -12,9 +13,25 @@ import { db, now, uid, type WarrantyRow } from "../db/store";
    - explicit dates ("valid until 03/15/2028", "expires March 2028")
    - durations from a purchase date ("2 year warranty", "24-month coverage") */
 
-const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+const MONTHS = [
+  "january",
+  "february",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+];
 
-export function parseWarranty(text: string, purchaseDate?: Date): { expiresAt: Date | null; termMonths: number | null } {
+export function parseWarranty(
+  text: string,
+  purchaseDate?: Date
+): { expiresAt: Date | null; termMonths: number | null } {
   const t = text.toLowerCase();
 
   // explicit mm/dd/yyyy or m/d/yy
@@ -88,9 +105,9 @@ warrantiesRouter.use(service("warranties"), requireAuth);
 warrantiesRouter.post(
   "/homes/:homeId/warranties",
   requireHomePermission("warranty:manage", (req) => req.params.homeId),
+  validate(WarrantyCreateSchema),
   (req, res) => {
-    const { item, provider = "—", expiresAt, ocrText, purchaseDate, assetId, source = "manual" } = req.body ?? {};
-    if (!item) throw new HttpError(400, "missing_item");
+    const { item, provider, expiresAt, ocrText, purchaseDate, assetId, source } = req.body;
 
     let expiry = expiresAt ? new Date(expiresAt) : null;
     if (!expiry && ocrText) {
