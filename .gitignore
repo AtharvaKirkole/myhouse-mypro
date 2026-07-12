@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+*.log
+.env*
+.DS_Store
+next-env.d.ts
+backend/data/
+test-results/
+playwright-report/
