@@ -15,7 +15,8 @@ import { ForbiddenError, NotFoundError, UnauthorizedError } from "./errors";
 
 export type Action = "view" | "create" | "edit" | "delete" | "manage";
 export type Resource =
-  "home" | "asset" | "warranty" | "utilities" | "family" | "job" | "payment" | "audit" | "chores" | "emergency";
+  | "home" | "asset" | "warranty" | "utilities" | "family" | "job" | "payment" | "audit" | "chores" | "emergency"
+  | "intel"; // knowledge graph, predictions, recommendations — home-scoped intelligence
 
 type Policy = Partial<Record<Resource, Action[]>>;
 
@@ -36,6 +37,7 @@ export const POLICIES: Record<string, Policy> = {
         "audit",
         "chores",
         "emergency",
+        "intel",
       ] as Resource[]
     ).map((r) => [r, FULL])
   ),
@@ -50,6 +52,7 @@ export const POLICIES: Record<string, Policy> = {
     audit: READ,
     chores: ["view", "manage"],
     emergency: READ,
+    intel: READ,
   },
   co_owner: {
     home: ["view", "edit"],
@@ -61,6 +64,7 @@ export const POLICIES: Record<string, Policy> = {
     payment: ["view", "manage"],
     chores: ["view", "manage"],
     emergency: READ,
+    intel: READ,
   },
   property_manager: {
     home: ["view", "edit"],
@@ -70,6 +74,7 @@ export const POLICIES: Record<string, Policy> = {
     job: ["view", "create", "edit", "manage"],
     payment: ["view", "manage"],
     emergency: READ,
+    intel: READ,
   },
   roommate: {
     home: READ,
@@ -77,6 +82,7 @@ export const POLICIES: Record<string, Policy> = {
     utilities: READ, // roommates share bills…
     job: ["view", "create"],
     emergency: READ,
+    intel: READ, // …predictions/maintenance affect the household they live in
     // …but warranties (financial documents) are deliberately absent
   },
   tenant: {
@@ -85,6 +91,7 @@ export const POLICIES: Record<string, Policy> = {
     utilities: READ,
     job: ["view", "create"],
     emergency: READ,
+    // intel deliberately absent: equity/valuation-adjacent data stays with owners
   },
   child: {
     home: READ,

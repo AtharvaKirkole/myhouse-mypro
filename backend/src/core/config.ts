@@ -59,6 +59,11 @@ function buildConfig() {
     eventBackoffMs: num(e.EVENT_BACKOFF_MS, 50),
     eventMaxAttempts: num(e.EVENT_MAX_ATTEMPTS, 5),
     redisUrl: e.REDIS_URL ?? "", // empty → in-memory KV
+    /* intelligence platform */
+    intelMinCohort: num(e.INTEL_MIN_COHORT, 3), // k-anonymity floor for cross-home aggregates (raise in prod)
+    dpEpsilon: Number(e.DP_EPSILON ?? 0), // >0 → Laplace noise on published aggregates
+    embedDim: num(e.EMBED_DIM, 64), // hash-embedding dimensions (pgvector/real model later)
+    retentionDays: num(e.RETENTION_DAYS, 365), // domain-event log retention
   };
 }
 

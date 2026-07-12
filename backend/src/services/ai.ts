@@ -12,7 +12,12 @@ import { asyncHandler, log, service } from "../core/http";
 import { AIError } from "../core/errors";
 import { inc } from "../core/metrics";
 import { requireAuth } from "./auth";
-import { validate, ExtractSchema } from "../core/validate";
+import { validate, DiagnoseSchema, ExtractSchema } from "../core/validate";
+import { db } from "../db/store";
+import { roleInHome, canAct } from "../core/rbac";
+import { NotFoundError } from "../core/errors";
+import { structureJob } from "./marketplace";
+import { matchContractors } from "../intelligence/matching";
 
 export const PROMPT_VERSION = "extract-asset/v3";
 
@@ -310,3 +315,130 @@ aiRouter.get("/providers", (_req, res) => {
     promptVersion: PROMPT_VERSION,
   });
 });
+
+/* ---------- issue intelligence pipeline (diagnose) ----------
+ * Input → classification → severity → entity extraction → symptom detection
+ * → root-cause prediction (learned from repair records, falling back to
+ * static priors) → recommended actions → contractor recommendation.
+ * Structured JSON only, per-stage confidence, versioned schema. */
+
+export const DIAGNOSE_VERSION = "diagnose/v1";
+
+const KNOWN_BRANDS = [
+  "LG", "Samsung", "Bosch", "GE", "Whirlpool", "Carrier", "Rheem", "Trane",
+  "Moen", "Kohler", "Delta", "Weber", "EGO", "Maytag", "KitchenAid", "Frigidaire",
+];
+
+const SYMPTOMS: Record<string, string[]> = {
+  Plumbing: ["leak", "drip", "clog", "no hot water", "low pressure", "running toilet", "smell"],
+  Electrical: ["no power", "flickering", "tripping", "buzzing", "sparking", "warm outlet"],
+  HVAC: ["not cooling", "not heating", "short cycling", "loud noise", "weak airflow", "frozen coil"],
+  "Appliance Repair": ["not draining", "not starting", "error code", "leaking", "loud noise", "not heating"],
+  Handyman: [],
+};
+
+const ROOT_CAUSE_PRIORS: Record<string, string[]> = {
+  Plumbing: ["worn cartridge or washer", "corroded supply line", "failed wax ring"],
+  Electrical: ["tripped GFCI upstream", "failing breaker", "loose neutral connection"],
+  HVAC: ["run capacitor failure", "refrigerant leak", "clogged condensate drain"],
+  "Appliance Repair": ["drain pump failure", "door latch or switch", "control board fault"],
+  Handyman: ["general wear"],
+};
+
+const ACTIONS: Record<string, string[]> = {
+  Plumbing: ["shut off the local valve", "photograph the leak source", "book a plumbing repair"],
+  Electrical: ["check the breaker panel and GFCIs", "stop using the affected circuit", "book an electrician"],
+  HVAC: ["check the filter and thermostat batteries", "clear space around the unit", "book an HVAC diagnostic"],
+  "Appliance Repair": ["note any error code on the display", "check the manufacturer warranty first", "book a repair"],
+  Handyman: ["photograph the issue", "book a general repair"],
+};
+
+aiRouter.post(
+  "/diagnose",
+  validate(DiagnoseSchema),
+  asyncHandler(async (req, res) => {
+    const { description, homeId, assetId } = req.body as {
+      description: string; homeId?: string; assetId?: string;
+    };
+    const pipeline: string[] = ["input:received", "text:normalized"];
+
+    // tenant guard: home/asset context only for members with intel access
+    let homeAssets: typeof db.data.assets = [];
+    if (homeId) {
+      const user = db.data.users.find((u) => u.id === req.userId);
+      const role = req.userId ? roleInHome(req.userId, homeId) : null;
+      if (!user?.isAdmin && (!role || !canAct(role, "view", "intel"))) throw new NotFoundError();
+      homeAssets = db.data.assets.filter((a) => a.homeId === homeId && !a.deletedAt);
+    }
+
+    const s = structureJob(description);
+    pipeline.push(`classify:${s.category}`, `severity:${s.urgency}`);
+
+    const text = description.toLowerCase();
+    const brand = KNOWN_BRANDS.find((b) => text.includes(b.toLowerCase()));
+    const affectedAsset =
+      (assetId ? homeAssets.find((a) => a.id === assetId) : undefined) ??
+      homeAssets.find((a) => (brand && a.brand.toLowerCase() === brand.toLowerCase()) || (a.name && text.includes(a.name.toLowerCase())));
+    pipeline.push(`entities:brand=${brand ?? "none"},asset=${affectedAsset ? "matched" : "none"}`);
+
+    const symptoms = (SYMPTOMS[s.category] ?? []).filter((sym) => text.includes(sym));
+    pipeline.push(`symptoms:${symptoms.length}`);
+
+    // root causes: learned distribution from repair records when available
+    const learned = db.data.repairRecords.filter(
+      (r) =>
+        r.issueCategory === s.category &&
+        r.rootCause &&
+        (!affectedAsset?.model || r.model === affectedAsset.model)
+    );
+    const causeCounts: Record<string, number> = {};
+    for (const r of learned) causeCounts[r.rootCause!] = (causeCounts[r.rootCause!] ?? 0) + 1;
+    const learnedCauses = Object.entries(causeCounts).sort((a, b) => b[1] - a[1]);
+    const probableRootCauses = learnedCauses.length
+      ? learnedCauses.slice(0, 3).map(([cause, n]) => ({
+          cause,
+          probability: Number((n / learned.length).toFixed(2)),
+          basis: `learned from ${learned.length} similar repairs`,
+        }))
+      : (ROOT_CAUSE_PRIORS[s.category] ?? ROOT_CAUSE_PRIORS.Handyman).map((cause, i) => ({
+          cause,
+          probability: Number((0.5 / (i + 1)).toFixed(2)),
+          basis: "category prior (insufficient repair data)",
+        }));
+    pipeline.push(`root-cause:${learnedCauses.length ? "learned" : "prior"}`);
+
+    // contractor recommendation only inside the caller's own home context
+    let recommendedContractors: { contractorId: string; business: string; score: number }[] | undefined;
+    if (homeId) {
+      const pseudoJob = {
+        id: "diag", homeId, createdBy: req.userId!, title: s.title, category: s.category,
+        urgency: s.urgency, description, status: "open" as const, createdAt: new Date().toISOString(),
+      };
+      recommendedContractors = matchContractors(pseudoJob, 3).map((m) => ({
+        contractorId: m.contractorId, business: m.business, score: m.score,
+      }));
+      pipeline.push("contractors:ranked");
+    }
+    pipeline.push("json:structured");
+
+    const confidence = Number(
+      Math.min(0.95, 0.4 + symptoms.length * 0.1 + (brand ? 0.15 : 0) + (learnedCauses.length ? 0.2 : 0)).toFixed(2)
+    );
+
+    res.json({
+      schemaVersion: DIAGNOSE_VERSION,
+      pipeline,
+      category: s.category,
+      severity: s.urgency === "emergency" ? "emergency" : "routine",
+      entities: {
+        brand: brand ?? null,
+        asset: affectedAsset ? { id: affectedAsset.id, name: affectedAsset.name, model: affectedAsset.model } : null,
+      },
+      symptoms,
+      probableRootCauses,
+      recommendedActions: ACTIONS[s.category] ?? ACTIONS.Handyman,
+      recommendedContractors,
+      confidence,
+    });
+  })
+);

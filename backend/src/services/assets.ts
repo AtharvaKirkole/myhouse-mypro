@@ -9,6 +9,7 @@ import { publish } from "../core/events";
 import { audit, requireAuth } from "./auth";
 import { validate, AssetCreateSchema, AssetPositionSchema, FileCreateSchema, PageQuerySchema } from "../core/validate";
 import { db, notDeleted, now, paginate, softDelete, touch, uid } from "../db/store";
+import { appendAssetEvent } from "../intelligence/learning";
 
 export const assetsRouter = Router();
 assetsRouter.use(service("assets"), requireAuth);
@@ -90,12 +91,39 @@ assetsRouter.patch(
     );
     if (!asset) throw new NotFoundError();
     const { x, y, room, version } = req.body;
+    const before = { x: asset.x, y: asset.y, room: asset.room };
     touch(asset, version); // throws ConflictError on stale version
     if (typeof x === "number") asset.x = x;
     if (typeof y === "number") asset.y = y;
     if (room) asset.room = room;
     db.persist();
+    // append-only history: moves accumulate, they never overwrite the past
+    appendAssetEvent({
+      assetId: asset.id, homeId: asset.homeId, kind: "moved",
+      before, after: { x: asset.x, y: asset.y, room: asset.room },
+      actorId: req.userId, requestId: req.requestId,
+    });
     res.json(asset);
+  }
+);
+
+/* full append-only history for one asset: lifecycle events + repairs */
+assetsRouter.get(
+  "/homes/:homeId/assets/:assetId/history",
+  authorize("view", "asset", (req) => req.params.homeId),
+  (req, res) => {
+    const asset = db.data.assets.find((a) => a.id === req.params.assetId && a.homeId === req.params.homeId);
+    if (!asset) throw new NotFoundError();
+    const events = db.data.assetEvents
+      .filter((e) => e.assetId === asset.id)
+      .sort((a, b) => (a.ts < b.ts ? 1 : -1));
+    const repairs = db.data.repairRecords
+      .filter((r) => r.assetId === asset.id)
+      .map((r) => ({
+        jobId: r.jobId, issueCategory: r.issueCategory, rootCause: r.rootCause,
+        partsReplaced: r.partsReplaced, costCents: r.costCents, createdAt: r.createdAt,
+      }));
+    res.json({ assetId: asset.id, events, repairs });
   }
 );
 
@@ -110,6 +138,10 @@ assetsRouter.delete(
     softDelete(asset);
     db.persist();
     audit(req, "asset.delete", asset.id, { before: { name: asset.name } });
+    appendAssetEvent({
+      assetId: asset.id, homeId: asset.homeId, kind: "deleted",
+      before: { name: asset.name }, actorId: req.userId, requestId: req.requestId,
+    });
     res.json({ ok: true, softDeleted: true });
   }
 );

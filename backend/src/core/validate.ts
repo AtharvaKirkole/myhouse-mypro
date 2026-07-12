@@ -159,6 +159,46 @@ export const AcceptBidSchema = z.object({
   jobVersion: z.number().int().optional(), // optimistic locking
 });
 
+/** structured repair capture at completion — feeds the intelligence platform */
+export const CompleteJobSchema = z.object({
+  assetId: entityId.optional(),
+  rootCause: z.string().trim().max(120).optional(),
+  partsReplaced: z.array(z.string().trim().max(60)).max(10).default([]),
+  laborMinutes: z.number().int().min(1).max(960).default(60),
+  costCents: z.number().int().min(0).max(10_000_000).optional(),
+  rating: z.number().int().min(1).max(5).optional(),
+  warrantyCovered: z.boolean().default(false),
+  notes: z.string().max(2000).optional(),
+  zip: z.string().regex(/^\d{5}$/, "5-digit ZIP").optional(),
+});
+
+/* ---------- intelligence ---------- */
+
+export const DiagnoseSchema = z.object({
+  description: z.string().trim().min(10).max(2000),
+  homeId: entityId.optional(),
+  assetId: entityId.optional(),
+});
+
+export const ReliabilityQuerySchema = z.object({
+  brand: z.string().trim().min(1).max(60),
+  model: z.string().trim().max(80).optional(),
+});
+
+export const RegionQuerySchema = z.object({
+  category: z.string().trim().max(40).optional(),
+});
+
+export const ContractorSuccessQuerySchema = z.object({
+  brand: z.string().trim().min(1).max(60),
+  minRate: z.coerce.number().min(0).max(1).default(0.9),
+});
+
+export const RepeatRepairsQuerySchema = z.object({
+  brand: z.string().trim().max(60).optional(),
+  minRepairs: z.coerce.number().int().min(1).max(20).default(2),
+});
+
 /* ---------- payments ---------- */
 
 export const RefundSchema = z.object({

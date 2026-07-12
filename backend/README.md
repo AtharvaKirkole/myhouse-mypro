@@ -127,9 +127,35 @@ error-rate<1% thresholds).
 | `POST/GET /api/warranties/homes/:id/warranties` | Warranties |
 | `POST /api/marketplace/homes/:id/jobs`, `GET /jobs/feed`, `POST /jobs/:id/bids`, `POST /bids/:id/accept·complete` | Marketplace |
 | `GET/PUT /api/notifications`, `/preferences` | Notifications |
-| `POST /api/ai/extract`, `GET /providers` | AI |
+| `POST /api/ai/extract·diagnose`, `GET /providers` | AI |
 | `POST /api/payments/:id/release·refund`, `GET /ledger·integrity` | Payments |
 | `GET /api/search?q=`, `/recent` | Global search |
+| `GET /api/intel/homes/:id/graph·predictions·recommendations`, `GET /jobs/:id/matches·similar`, `GET /reliability/*`, `GET /analytics/*`, `GET /contractors/me/profile` | Intelligence |
 | `GET /health·/live·/ready·/metrics`, `/api/flags` | Platform |
 
 REST for MVP; GraphQL only if client query patterns demand it.
+
+## Intelligence platform (knowledge graph & data network)
+
+No new user-facing features — every interaction now feeds structured data that
+compounds (`src/intelligence/`):
+
+| Piece | What it does |
+|---|---|
+| **Knowledge graph** (`graph.ts`) | every home/room/asset/warranty/issue/contractor/manufacturer/model/part is a UUID node; relationships are **append-only edges** (`retractedAt`, never deleted). Manufacturer/Model/Part nodes are global and deduped across tenants; home subgraphs are tenant-guarded. Neo4j swaps in behind the same functions. |
+| **Asset history** (`assetEvents`) | updates append, never overwrite — creation, moves (before/after), repairs, deletion all accumulate per asset (`GET …/assets/:id/history`) |
+| **Repair records** (`learning.ts`) | job completion captures root cause, parts, labor, cost, rating, warranty coverage, season, ZIP; notes are **PII-scrubbed** before storage |
+| **Contractor profiles** | materialized expertise: brands/models/categories worked, quote accuracy, repeat customers, reliability/quality scores, skill confidence — recomputed on every completed repair |
+| **Matching engine** (`matching.ts`) | never "closest first": 9 weighted factors (model/brand/category experience, rating, quality, pricing consistency, proximity, availability, emergency fit) with an **explainable per-factor breakdown** |
+| **Similarity engine** (`embeddings.ts`, `similarity.ts`) | issues embed into vectors (deterministic feature-hash today, pgvector + real embeddings later); new issues return k-anonymized aggregates: avg cost, top root causes, replacement probability, best contractor |
+| **Predictive maintenance** (`predictive.ts`) | per-asset failure probability (logistic hazard on age/lifespan, blended with cohort analytics), remaining useful life, expected cost, repair/replace recommendation — each with reasons + confidence |
+| **Model analytics** (`analytics.ts`) | cross-home reliability scores, failure-prone models, seasonal peaks, issues by region (3-digit ZIP prefixes only) |
+| **Recommendations** (`recommend.ts`) | proactive feed: recalls first, then replace/repair, warranty-claims-before-expiry, seasonal, efficiency |
+| **Domain-event log** (`domainEvents`) | immutable, **versioned-schema**, PII-minimized event log — training data for future ML (failure/cost prediction, fraud, ranking) |
+| **Diagnose pipeline** (`POST /api/ai/diagnose`) | classification → severity → entity extraction → symptoms → root causes **learned from repair records** (priors as fallback) → actions → contractor ranking; structured JSON only |
+
+**Privacy contract** (`privacy.ts`): cross-home data is published *only* as
+aggregates behind a k-anonymity floor (`INTEL_MIN_COHORT`); optional Laplace
+noise (`DP_EPSILON`); PII scrubbing on stored free text; domain-event retention
+window (`RETENTION_DAYS`); home-scoped queries ride the same RBAC policy engine
+(`intel` resource) with 404 tenant isolation.

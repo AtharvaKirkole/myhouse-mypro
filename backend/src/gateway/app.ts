@@ -22,6 +22,9 @@ import { notificationsRouter, registerNotificationConsumers } from "../services/
 import { aiRouter } from "../services/ai";
 import { paymentsRouter } from "../services/payments";
 import { searchRouter } from "../services/search";
+import { intelRouter } from "../intelligence/router";
+import { registerIntelligenceConsumers } from "../intelligence/learning";
+import { purgeExpiredIntel } from "../intelligence/privacy";
 import { assertDatabaseLoaded, db } from "../db/store";
 
 let consumersRegistered = false;
@@ -29,6 +32,7 @@ let consumersRegistered = false;
 export function createApp() {
   if (!consumersRegistered) {
     registerNotificationConsumers();
+    registerIntelligenceConsumers();
     consumersRegistered = true;
   }
 
@@ -75,6 +79,7 @@ export function createApp() {
   app.use("/api/ai", aiRouter);
   app.use("/api/payments", paymentsRouter);
   app.use("/api/search", searchRouter);
+  app.use("/api/intel", intelRouter);
 
   app.get("/api/analytics/summary", requireAuth, requireAdmin, (_req, res) => {
     const counts: Record<string, number> = {};
@@ -97,8 +102,11 @@ export function createApp() {
   return app;
 }
 
-/** hourly warranty reminder scan (cron/worker in production) */
+/** hourly warranty reminder scan + retention purge (cron/worker in production) */
 export function startSchedulers() {
   runReminderScan();
-  return setInterval(() => runReminderScan(), 60 * 60 * 1000);
+  return setInterval(() => {
+    runReminderScan();
+    purgeExpiredIntel();
+  }, 60 * 60 * 1000);
 }

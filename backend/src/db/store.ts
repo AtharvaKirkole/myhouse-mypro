@@ -216,6 +216,110 @@ export interface AnalyticsRow {
   props?: Record<string, unknown>;
 }
 
+/* ---------- intelligence platform (knowledge graph & data network) ---------- */
+
+/** Graph node — global entities (Manufacturer/Model/Part) carry homeId: null. */
+export interface GraphNodeRow {
+  id: string;
+  type:
+    | "House" | "Room" | "Asset" | "Component" | "Document" | "Warranty"
+    | "Job" | "Issue" | "Contractor" | "Manufacturer" | "ModelNode" | "Part" | "Claim";
+  key: string; // natural dedupe key, e.g. "manufacturer:lg" or the row id
+  label: string;
+  homeId: string | null; // tenant scope; null = shared/global entity
+  props?: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** Graph edge — append-only. Never deleted; retractedAt marks retirement. */
+export interface GraphEdgeRow {
+  id: string;
+  from: string;
+  to: string;
+  rel: string; // HAS_ASSET | LOCATED_IN | INSTANCE_OF | MADE_BY | HAS_WARRANTY | RAISED_ISSUE | AFFECTS | REPAIRED_BY | USED_PART | HAS_DOCUMENT
+  homeId: string | null;
+  createdAt: string;
+  retractedAt?: string | null;
+  requestId?: string;
+}
+
+/** Append-only asset history — updates never overwrite, they accumulate. */
+export interface AssetEventRow {
+  id: string;
+  assetId: string;
+  homeId: string;
+  kind: "created" | "moved" | "updated" | "repaired" | "warranty_linked" | "condition" | "deleted";
+  before?: unknown;
+  after?: unknown;
+  ts: string;
+  actorId?: string;
+  requestId?: string;
+}
+
+/** Structured record of every completed repair — the learning substrate. */
+export interface RepairRecordRow {
+  id: string;
+  jobId: string;
+  homeId: string;
+  contractorId: string;
+  assetId?: string | null;
+  brand?: string;
+  model?: string;
+  issueCategory: string;
+  rootCause?: string;
+  partsReplaced: string[];
+  laborMinutes: number;
+  costCents: number;
+  bidCents?: number; // quote accuracy = |bid - cost| / bid
+  rating?: number;
+  warrantyCovered: boolean;
+  zip?: string;
+  season: "winter" | "spring" | "summer" | "fall";
+  notes?: string; // PII-scrubbed before storage
+  createdAt: string;
+}
+
+/** Issue embedding for the similarity engine (pgvector/Pinecone later). */
+export interface IssueVectorRow {
+  id: string;
+  refType: "job";
+  refId: string;
+  homeId: string;
+  brand?: string;
+  model?: string;
+  category: string;
+  vector: number[];
+  createdAt: string;
+}
+
+/** Materialized contractor expertise profile — recomputed by the learning pipeline. */
+export interface ContractorProfileRow {
+  userId: string;
+  jobsCompleted: number;
+  brands: Record<string, number>;
+  models: Record<string, number>;
+  issueCategories: Record<string, number>;
+  avgRating: number | null;
+  avgLaborMinutes: number | null;
+  quoteAccuracy: number | null; // 1 = perfect quotes
+  repeatCustomers: number;
+  emergencyJobs: number;
+  warrantyCoveredJobs: number;
+  reliabilityScore: number; // 0..100
+  qualityScore: number; // 0..100
+  skillConfidence: number; // 0..1 grows with evidence
+  updatedAt: string;
+}
+
+/** Immutable, PII-minimized domain event log — training data for future ML. */
+export interface DomainEventRow {
+  id: string;
+  name: string;
+  schemaVersion: number;
+  payload: Record<string, unknown>;
+  ts: string;
+}
+
 interface Tables {
   meta: { schemaVersion: number };
   users: UserRow[];
@@ -234,6 +338,13 @@ interface Tables {
   verificationTokens: VerificationTokenRow[];
   auditLogs: AuditRow[];
   analytics: AnalyticsRow[];
+  graphNodes: GraphNodeRow[];
+  graphEdges: GraphEdgeRow[];
+  assetEvents: AssetEventRow[];
+  repairRecords: RepairRecordRow[];
+  issueVectors: IssueVectorRow[];
+  contractorProfiles: ContractorProfileRow[];
+  domainEvents: DomainEventRow[];
 }
 
 const EMPTY: Tables = {
@@ -254,6 +365,13 @@ const EMPTY: Tables = {
   verificationTokens: [],
   auditLogs: [],
   analytics: [],
+  graphNodes: [],
+  graphEdges: [],
+  assetEvents: [],
+  repairRecords: [],
+  issueVectors: [],
+  contractorProfiles: [],
+  domainEvents: [],
 };
 
 /* ---------- migrations ---------- */
@@ -278,6 +396,47 @@ export const MIGRATIONS: Migration[] = [
     up(data) {
       for (const j of data.jobs) if (j.version === undefined) j.version = 1;
       for (const a of data.assets) if (a.version === undefined) a.version = 1;
+    },
+  },
+  {
+    version: 3,
+    name: "intelligence-graph-backfill",
+    up(data) {
+      // seed graph nodes/edges + creation history for rows that predate the
+      // intelligence platform — every existing home/asset joins the graph
+      const ts = new Date().toISOString();
+      const nodeByKey = new Map(data.graphNodes.map((n) => [`${n.type}:${n.key}:${n.homeId ?? ""}`, n]));
+      const ensure = (
+        type: GraphNodeRow["type"],
+        key: string,
+        label: string,
+        homeId: string | null
+      ): GraphNodeRow => {
+        const mapKey = `${type}:${key}:${homeId ?? ""}`;
+        let n = nodeByKey.get(mapKey);
+        if (!n) {
+          n = { id: `node_${randomUUID()}`, type, key, label, homeId, createdAt: ts };
+          data.graphNodes.push(n);
+          nodeByKey.set(mapKey, n);
+        }
+        return n;
+      };
+      for (const h of data.homes.filter((x) => !x.deletedAt)) {
+        ensure("House", h.id, h.address, h.id);
+      }
+      for (const a of data.assets.filter((x) => !x.deletedAt)) {
+        const house = ensure("House", a.homeId, a.homeId, a.homeId);
+        const asset = ensure("Asset", a.id, a.name, a.homeId);
+        data.graphEdges.push({
+          id: `edge_${randomUUID()}`, from: house.id, to: asset.id, rel: "HAS_ASSET", homeId: a.homeId, createdAt: ts,
+        });
+        if (!data.assetEvents.some((e) => e.assetId === a.id && e.kind === "created")) {
+          data.assetEvents.push({
+            id: `aev_${randomUUID()}`, assetId: a.id, homeId: a.homeId, kind: "created",
+            after: { name: a.name, brand: a.brand, model: a.model }, ts: a.createdAt ?? ts,
+          });
+        }
+      }
     },
   },
 ];

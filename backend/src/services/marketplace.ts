@@ -8,20 +8,31 @@ import { ConflictError, ForbiddenError, NotFoundError } from "../core/errors";
 import { authorize } from "../core/rbac";
 import { publish } from "../core/events";
 import { audit, requireAuth } from "./auth";
-import { validate, JobCreateSchema, BidCreateSchema, AcceptBidSchema } from "../core/validate";
+import { validate, JobCreateSchema, BidCreateSchema, AcceptBidSchema, CompleteJobSchema } from "../core/validate";
 import { db, now, touch, uid, type JobRow } from "../db/store";
 import { createHold } from "./payments";
 
+/* appliance nouns first: "dishwasher not draining" is an appliance job even
+   though "drain" is a plumbing word — named equipment outranks symptoms */
 const CATEGORY_WORDS: [string, string[]][] = [
+  ["Appliance Repair", ["fridge", "refrigerator", "dishwasher", "washer", "dryer", "oven", "stove", "microwave"]],
   ["Plumbing", ["leak", "pipe", "faucet", "drain", "toilet", "water heater", "clog"]],
   ["Electrical", ["outlet", "breaker", "spark", "wiring", "panel", "no power"]],
   ["HVAC", ["ac ", "air condition", "furnace", "no heat", "not cooling", "hvac", "compressor"]],
-  ["Appliance Repair", ["fridge", "refrigerator", "dishwasher", "washer", "dryer", "oven"]],
 ];
 
 export function structureJob(description: string): { title: string; category: string; urgency: string } {
   const t = ` ${description.toLowerCase()} `;
-  const category = CATEGORY_WORDS.find(([, words]) => words.some((w) => t.includes(w)))?.[0] ?? "Handyman";
+  // score by hit count; ties resolve to the earlier (more specific) category
+  let category = "Handyman";
+  let best = 0;
+  for (const [name, words] of CATEGORY_WORDS) {
+    const hits = words.filter((w) => t.includes(w)).length;
+    if (hits > best) {
+      best = hits;
+      category = name;
+    }
+  }
   const urgency = /(flood|burst|sparking|no power|no heat|emergency|asap)/.test(t) ? "emergency" : "flexible";
   return { title: `${category} — ${description.slice(0, 48)}`, category, urgency };
 }
@@ -81,7 +92,13 @@ marketplaceRouter.post(
     db.data.jobs.push(job);
     db.persist();
     audit(req, "job.create", job.id, { after: { category: job.category, urgency: job.urgency } });
-    publish("job.created", { jobId: job.id, category: job.category, urgency: job.urgency });
+    publish("job.created", {
+      jobId: job.id,
+      homeId: job.homeId,
+      category: job.category,
+      urgency: job.urgency,
+      description: job.description,
+    });
     res.status(201).json(job);
   }
 );
@@ -143,12 +160,32 @@ marketplaceRouter.post("/bids/:bidId/accept", validate(AcceptBidSchema), idempot
   res.json(result);
 });
 
-marketplaceRouter.post("/jobs/:jobId/complete", idempotency, (req, res) => {
+/*
+ * Completion captures structured repair intelligence (all fields optional —
+ * the old bare completion still works). The payload feeds the learning
+ * pipeline: repair record → contractor profile → model analytics → graph.
+ */
+marketplaceRouter.post("/jobs/:jobId/complete", validate(CompleteJobSchema), idempotency, (req, res) => {
   const job = db.data.jobs.find((j) => j.id === req.params.jobId);
   if (!job || job.createdBy !== req.userId) throw new NotFoundError();
+
+  // assetId, if supplied, must belong to the job's own home — no cross-tenant links
+  if (req.body.assetId && !db.data.assets.some((a) => a.id === req.body.assetId && a.homeId === job.homeId)) {
+    throw new NotFoundError("asset_not_found");
+  }
+
   transition(job, "completed");
   db.persist();
-  audit(req, "job.complete", job.id);
-  publish("job.completed", { jobId: job.id });
+  const bid = job.acceptedBidId ? db.data.bids.find((b) => b.id === job.acceptedBidId) : undefined;
+  audit(req, "job.complete", job.id, { after: { rootCause: req.body.rootCause, rating: req.body.rating } });
+  publish("job.completed", {
+    jobId: job.id,
+    homeId: job.homeId,
+    contractorId: bid?.proUserId,
+    priceCents: bid ? Math.round(bid.price * 100) : undefined,
+    category: job.category,
+    urgency: job.urgency,
+    ...req.body,
+  });
   res.json(job);
 });
