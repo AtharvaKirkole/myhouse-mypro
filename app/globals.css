@@ -3,7 +3,7 @@
 :root {
   /* chart + status tokens (validated palette) */
   --surface-1: #fcfcfb;
-  --page: #f9f9f7;
+  --page: #faf9f7;
   --ink: #0b0b0b;
   --ink-2: #52514e;
   --ink-muted: #898781;
@@ -23,11 +23,99 @@ html {
 }
 
 body {
-  background: var(--page);
+  background:
+    radial-gradient(1200px 500px at 85% -10%, rgba(6, 95, 70, 0.05), transparent 60%),
+    radial-gradient(900px 420px at -10% 20%, rgba(217, 119, 6, 0.04), transparent 55%),
+    var(--page);
   color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01" on, "cv11" on;
 }
 
+h1, h2, h3 {
+  letter-spacing: -0.025em;
+}
+
+::selection {
+  background: rgba(6, 95, 70, 0.14);
+}
+
+/* ---------- quiet, elegant scrollbar ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d6d3d1 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d6d3d1;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- global card treatment: every rounded-2xl surface gets a
+   layered hairline + soft ambient shadow and a gentle hover lift ---------- */
+.rounded-2xl {
+  box-shadow:
+    0 0 0 1px rgba(28, 25, 23, 0.03),
+    0 1px 2px rgba(28, 25, 23, 0.04),
+    0 8px 24px -12px rgba(28, 25, 23, 0.08);
+  transition:
+    box-shadow 0.25s ease,
+    transform 0.25s ease,
+    border-color 0.25s ease;
+}
+a.rounded-2xl:hover,
+div.rounded-2xl:hover {
+  box-shadow:
+    0 0 0 1px rgba(28, 25, 23, 0.04),
+    0 2px 4px rgba(28, 25, 23, 0.05),
+    0 16px 40px -16px rgba(28, 25, 23, 0.14);
+}
+a.rounded-2xl:hover {
+  transform: translateY(-2px);
+}
+
+/* ---------- buttons: subtle depth, satisfying press ---------- */
+button.rounded-full,
+a.rounded-full {
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+button.rounded-full:active,
+a.rounded-full:active {
+  transform: scale(0.97);
+}
+a.rounded-full.bg-emerald-800,
+button.rounded-full.bg-emerald-800,
+a.rounded-full.bg-amber-500,
+button.rounded-full.bg-amber-500,
+button.rounded-full.bg-stone-900,
+a.rounded-full.bg-stone-900 {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 1px 2px rgba(28, 25, 23, 0.2),
+    0 6px 16px -8px rgba(28, 25, 23, 0.35);
+}
+
+/* ---------- inputs ---------- */
+input, textarea, select {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+input:focus, textarea:focus {
+  box-shadow: 0 0 0 4px rgba(6, 95, 70, 0.08);
+}
+
+/* ---------- motion ---------- */
 @keyframes bid-in {
   from {
     opacity: 0;
@@ -55,4 +143,26 @@ body {
 
 .live-dot {
   animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+main > * {
+  animation: rise-in 0.5s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

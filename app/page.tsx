@@ -4,14 +4,17 @@ export default function Landing() {
   return (
     <div className="mx-auto max-w-6xl px-4">
       {/* Hero */}
-      <section className="pb-12 pt-16 text-center sm:pt-24">
-        <p className="mx-auto mb-4 w-fit rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-600 ring-1 ring-stone-200">
+      <section className="pb-16 pt-20 text-center sm:pt-28">
+        <p className="mx-auto mb-6 w-fit rounded-full bg-white/70 px-4 py-1.5 text-xs font-medium tracking-wide text-stone-500 ring-1 ring-stone-200 backdrop-blur">
           Two products · one shared record of every home in America
         </p>
-        <h1 className="mx-auto max-w-3xl text-4xl font-bold tracking-tight text-stone-900 sm:text-6xl">
-          The operating system for home ownership.
+        <h1 className="mx-auto max-w-4xl text-5xl font-bold tracking-tighter text-stone-900 sm:text-7xl">
+          The operating system for{" "}
+          <span className="bg-gradient-to-br from-emerald-800 via-emerald-700 to-amber-600 bg-clip-text text-transparent">
+            home ownership.
+          </span>
         </h1>
-        <p className="mx-auto mt-5 max-w-2xl text-lg text-stone-600">
+        <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-stone-500">
           <span className="font-semibold text-stone-900">MyHouse</span> gives
           every home a digital twin, a permanent history, and a maintenance
           brain. <span className="font-semibold text-stone-900">MyPro</span>{" "}

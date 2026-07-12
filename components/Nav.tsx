@@ -43,7 +43,7 @@ export default function Nav() {
         : null;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-stone-200 bg-white/85 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-stone-200/70 bg-white/70 shadow-[0_1px_12px_-6px_rgba(28,25,23,0.1)] backdrop-blur-xl">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4">
         <Link href="/" className="flex shrink-0 items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-800 text-white">
