@@ -92,10 +92,19 @@ is already machine-parseable for that pipeline.
 ## Environments & CI/CD
 
 `dev → test → staging → production`, each with its own `DATA_DIR`/database.
-GitHub Actions (`.github/workflows/ci.yml`):
+GitHub Actions (`ci/github-actions-ci.yml`):
 lint/typecheck → unit + integration tests → Next build + Docker image → Playwright
 e2e → **auto-deploy staging** (+ smoke test) → **production behind a manual
 approval** (GitHub environment protection rule).
+
+> **Activate CI:** the workflow lives at `ci/github-actions-ci.yml` because the
+> current `gh` OAuth token lacks the `workflow` scope needed to push into
+> `.github/workflows/`. To enable it:
+> ```bash
+> gh auth refresh -h github.com -s workflow   # one-time browser approval
+> git mv ci/github-actions-ci.yml .github/workflows/ci.yml
+> git commit -m "Enable CI workflow" && git push
+> ```
 
 Load testing: `k6 run backend/load/k6-load.js` — ramps to 10k VUs with
 1000 uploads/min and 500 repair requests/min scenarios and p95<500ms thresholds.

@@ -4,6 +4,10 @@
 process.env.DATA_DIR = process.env.DATA_DIR ?? "data-smoke";
 process.env.RATE_LIMIT = "10000";
 
+/* dynamic imports keep the env overrides above effective before any module
+   reads config; the bare export marks this file as a module for TS */
+export {};
+
 const { createApp } = await import("../src/gateway/app");
 const { db } = await import("../src/db/store");
 const { flushEvents } = await import("../src/core/events");
@@ -14,7 +18,8 @@ const server = app.listen(0);
 const port = (server.address() as { port: number }).port;
 const base = `http://127.0.0.1:${port}`;
 
-async function call(method: string, path: string, body?: unknown, token?: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function call(method: string, path: string, body?: unknown, token?: string): Promise<{ status: number; json: any }> {
   const res = await fetch(base + path, {
     method,
     headers: {
