@@ -6,5 +6,7 @@ out/
 .DS_Store
 next-env.d.ts
 backend/data/
+backend/data-test/
+backend/data-smoke/
 test-results/
 playwright-report/
