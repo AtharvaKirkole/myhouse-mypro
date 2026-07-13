@@ -17,7 +17,75 @@ export interface StructuredJob {
   budget: { min: number; max: number };
 }
 
+/*
+ * Ordered by specificity: multi-word / named-equipment categories are
+ * checked before generic ones, so ties in hit-count resolve to the more
+ * specific match (e.g. "toilet cleaning" → Bathroom & Toilet Cleaning, not
+ * Plumbing; "dishwasher not draining" → Appliance Repair, not Plumbing).
+ */
 const CATEGORY_RULES: { category: Category; words: string[] }[] = [
+  {
+    category: "Bathroom & Toilet Cleaning",
+    words: ["toilet clean", "bathroom clean", "bathrooms clean", "sanitiz", "grout"],
+  },
+  {
+    category: "Window Cleaning",
+    words: ["window clean", "windows washed", "window washing"],
+  },
+  {
+    category: "Pressure Washing",
+    words: ["pressure wash", "power wash"],
+  },
+  {
+    category: "Gutter Cleaning",
+    words: ["gutter"],
+  },
+  {
+    category: "Pool Care",
+    words: ["pool", "hot tub", "spa "],
+  },
+  {
+    category: "Pest Control",
+    words: ["pest", "termite", "roach", "ants", "mosquito", "bed bug", "rodent", "scorpion"],
+  },
+  {
+    category: "Junk Removal",
+    words: ["junk", "haul away", "haul-away", "declutter", "furniture removal", "appliance removal"],
+  },
+  {
+    category: "Trash Collection",
+    words: ["trash", "garbage", "bin pickup", "waste pickup", "bulk waste"],
+  },
+  {
+    category: "Scrap Collection",
+    words: ["scrap"],
+  },
+  {
+    category: "Snow Removal",
+    words: ["snow", "plow"],
+  },
+  {
+    category: "Locksmith",
+    words: ["locked out", "rekey", "deadbolt", "door lock", "smart lock"],
+  },
+  {
+    category: "Gardening",
+    words: ["garden", "weed", "hedge", "shrub", "flower bed", "mow"],
+  },
+  {
+    category: "Appliance Repair",
+    words: [
+      "fridge",
+      "refrigerator",
+      "dishwasher",
+      "washer",
+      "dryer",
+      "oven",
+      "stove",
+      "microwave",
+      "appliance",
+    ],
+  },
   {
     category: "Plumbing",
     words: [
@@ -61,20 +129,6 @@ const CATEGORY_RULES: { category: Category; words: string[] }[] = [
       "hvac",
       "compressor",
       "vent",
-    ],
-  },
-  {
-    category: "Appliance Repair",
-    words: [
-      "fridge",
-      "refrigerator",
-      "dishwasher",
-      "washer",
-      "dryer",
-      "oven",
-      "stove",
-      "microwave",
-      "appliance",
     ],
   },
   {
@@ -128,9 +182,21 @@ const TITLES: Record<Category, string> = {
   HVAC: "Heating / cooling service",
   "Appliance Repair": "Appliance repair",
   Cleaning: "Home cleaning",
+  "Bathroom & Toilet Cleaning": "Bathroom & toilet cleaning",
+  Gardening: "Garden & lawn care",
   Moving: "Moving help",
   Handyman: "General repair",
   Landscaping: "Yard & landscape work",
+  "Junk Removal": "Junk removal",
+  "Trash Collection": "Trash & bin pickup",
+  "Scrap Collection": "Scrap pickup",
+  "Pest Control": "Pest control treatment",
+  "Pool Care": "Pool & spa service",
+  "Pressure Washing": "Pressure washing",
+  "Window Cleaning": "Window cleaning",
+  "Gutter Cleaning": "Gutter cleaning",
+  "Snow Removal": "Snow removal",
+  Locksmith: "Locksmith service",
 };
 
 const SCOPE: Record<Category, string[]> = {
@@ -176,6 +242,73 @@ const SCOPE: Record<Category, string[]> = {
   Landscaping: [
     "Walk property and confirm scope",
     "Complete work with haul-away",
+    "Photo-verify completion",
+  ],
+  "Bathroom & Toilet Cleaning": [
+    "Walkthrough and fixed quote",
+    "Deep clean toilets, tile, and grout",
+    "Sanitize all surfaces",
+    "Photo checklist on completion",
+  ],
+  Gardening: [
+    "Walk the yard and confirm scope",
+    "Mow, weed, and trim as needed",
+    "Haul away clippings",
+    "Photo-verify completion",
+  ],
+  "Junk Removal": [
+    "Confirm item list and access",
+    "Load and haul away",
+    "Sweep area clean",
+    "Photo-verify completion",
+  ],
+  "Trash Collection": [
+    "Confirm bin count and pickup schedule",
+    "Collect and dispose",
+    "Return bins to place",
+  ],
+  "Scrap Collection": [
+    "Confirm scrap items and access",
+    "Load and haul away",
+    "Photo-verify completion",
+  ],
+  "Pest Control": [
+    "Inspect for entry points and activity",
+    "Apply treatment",
+    "Set follow-up monitoring",
+    "Provide prevention tips",
+  ],
+  "Pool Care": [
+    "Test water chemistry",
+    "Clean and balance the pool/spa",
+    "Check equipment (pump, filter, heater)",
+    "Photo-verify completion",
+  ],
+  "Pressure Washing": [
+    "Walk surfaces to confirm scope",
+    "Pressure wash driveway/patio/siding",
+    "Photo-verify completion",
+  ],
+  "Window Cleaning": [
+    "Confirm interior/exterior scope",
+    "Clean glass, sills, and screens",
+    "Photo-verify completion",
+  ],
+  "Gutter Cleaning": [
+    "Inspect gutters and downspouts",
+    "Clear debris and flush",
+    "Check for leaks/sagging",
+    "Photo-verify completion",
+  ],
+  "Snow Removal": [
+    "Clear driveway and walkways",
+    "Apply salt/ice melt",
+    "Photo-verify completion",
+  ],
+  Locksmith: [
+    "Verify identity and ownership",
+    "Rekey, repair, or replace lock",
+    "Test all keys/access",
     "Photo-verify completion",
   ],
 };
@@ -276,6 +409,54 @@ const NOTES: Record<Category, string[]> = {
   Landscaping: [
     "Includes haul-away of all debris.",
     "Can put you on a monthly route after this job.",
+  ],
+  "Bathroom & Toilet Cleaning": [
+    "Eco-friendly disinfectants, fixed price for your bathroom count.",
+    "Grout and tile deep-clean included at no extra charge.",
+  ],
+  Gardening: [
+    "I can put you on a recurring biweekly route after this visit.",
+    "Includes clippings haul-away.",
+  ],
+  "Junk Removal": [
+    "Crew of two, truck included — no item is too big.",
+    "We donate or recycle what we can before the dump.",
+  ],
+  "Trash Collection": [
+    "Reliable weekly pickup, bins returned to place.",
+    "Can add recycling to the same route.",
+  ],
+  "Scrap Collection": [
+    "We pay competitive scrap rates on metal.",
+    "Same-day pickup available.",
+  ],
+  "Pest Control": [
+    "Includes a 30-day follow-up visit at no charge.",
+    "Pet- and kid-safe treatment options.",
+  ],
+  "Pool Care": [
+    "Weekly route available after this service.",
+    "Includes equipment check at no extra cost.",
+  ],
+  "Pressure Washing": [
+    "Soft-wash option available for siding and roof.",
+    "Driveway sealant available as an add-on.",
+  ],
+  "Window Cleaning": [
+    "Streak-free guarantee, interior and exterior.",
+    "Screens cleaned and re-hung at no charge.",
+  ],
+  "Gutter Cleaning": [
+    "Includes a photo report of downspout flow.",
+    "Can flag any repair needs while up there.",
+  ],
+  "Snow Removal": [
+    "On-call for the whole season — priority routing.",
+    "Ice melt included in the price.",
+  ],
+  Locksmith: [
+    "Licensed and bonded — ID verification required.",
+    "Can rekey all house locks to one key.",
   ],
 };
 
