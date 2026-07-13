@@ -1,21 +1,57 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Theme: matte "old book page" — bone paper, muted lavender
+   titles, matte-black hairline borders. Re-skinned centrally by
+   overriding Tailwind's color tokens so every utility (including
+   /opacity variants and gradients) follows automatically.
+   ============================================================ */
+
 :root {
-  /* chart + status tokens (validated palette) */
-  --surface-1: #fcfcfb;
-  --page: #faf9f7;
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --ink-muted: #898781;
-  --grid: #e1e0d9;
-  --axis: #c3c2b7;
-  --seq-450: #2a78d6;
-  --seq-550: #1c5cab;
-  --seq-250: #86b6ef;
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-serious: #ec835a;
-  --status-critical: #d03b3b;
+  /* --- paper (bone / aged page) --- */
+  --page: #ece3cf;
+  --surface-1: #f6f0e1;
+
+  /* backgrounds */
+  --color-white: #f6f0e1; /* cards, modals, nav */
+  --color-stone-50: #efe7d3;
+  --color-stone-100: #e7dcc4;
+
+  /* --- ink ramp: warm matte charcoal for body, lavender for titles --- */
+  --ink: #2f2a22;
+  --ink-2: #5b5346;
+  --ink-muted: #8a8171;
+  --color-stone-950: #201c16;
+  --color-stone-900: #574d76; /* ← muted dark lavender: titles, names, dark fills */
+  --color-stone-800: #322d25; /* strong body ink (matte near-black) */
+  --color-stone-700: #4a4238;
+  --color-stone-600: #6d6456;
+  --color-stone-500: #8a8171;
+  --color-stone-400: #a99e8b;
+  --color-stone-300: #c9bda3;
+  --color-stone-200: #d8ccb2; /* avatar/inset fills (borders overridden below) */
+
+  /* --- primary accent = the same lavender (remaps the emerald brand ramp) --- */
+  --color-emerald-50: #efecf6;
+  --color-emerald-100: #e3ddf1;
+  --color-emerald-200: #cec4e4;
+  --color-emerald-700: #655a86;
+  --color-emerald-800: #574d76;
+  --color-emerald-900: #3d3557;
+
+  /* matte-black border ink */
+  --edge: 33, 29, 23;
+
+  /* chart + status tokens */
+  --grid: #ddd2b8;
+  --axis: #c3b79b;
+  --seq-450: #5b5178;
+  --seq-550: #433a5f;
+  --seq-250: #a99fc4;
+  --status-good: #4a7a4a;
+  --status-warning: #b8862c;
+  --status-serious: #b56a4a;
+  --status-critical: #a83f3f;
 }
 
 html {
@@ -24,8 +60,8 @@ html {
 
 body {
   background:
-    radial-gradient(1200px 500px at 85% -10%, rgba(6, 95, 70, 0.05), transparent 60%),
-    radial-gradient(900px 420px at -10% 20%, rgba(217, 119, 6, 0.04), transparent 55%),
+    radial-gradient(1200px 520px at 85% -10%, rgba(87, 77, 118, 0.07), transparent 60%),
+    radial-gradient(900px 440px at -10% 18%, rgba(120, 92, 58, 0.05), transparent 55%),
     var(--page);
   color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -39,33 +75,40 @@ h1, h2, h3 {
 }
 
 ::selection {
-  background: rgba(6, 95, 70, 0.14);
+  background: rgba(87, 77, 118, 0.22);
 }
+
+/* ---------- matte-black hairline borders + rings (override utilities) ---------- */
+.border-stone-100 { border-color: rgba(var(--edge), 0.14); }
+.border-stone-200 { border-color: rgba(var(--edge), 0.32); }
+.border-stone-300 { border-color: rgba(var(--edge), 0.46); }
+.ring-stone-200 { --tw-ring-color: rgba(var(--edge), 0.24); }
+.ring-stone-300 { --tw-ring-color: rgba(var(--edge), 0.42); }
+.divide-stone-100 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--edge), 0.12); }
 
 /* ---------- quiet, elegant scrollbar ---------- */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d6d3d1 transparent;
+  scrollbar-color: #c7bb9d transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #d6d3d1;
+  background: #c7bb9d;
   border-radius: 8px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* ---------- global card treatment: every rounded-2xl surface gets a
-   layered hairline + soft ambient shadow and a gentle hover lift ---------- */
+/* ---------- global card treatment: matte-black hairline + soft shadow, gentle hover lift ---------- */
 .rounded-2xl {
   box-shadow:
-    0 0 0 1px rgba(28, 25, 23, 0.03),
-    0 1px 2px rgba(28, 25, 23, 0.04),
-    0 8px 24px -12px rgba(28, 25, 23, 0.08);
+    0 0 0 1px rgba(var(--edge), 0.16),
+    0 1px 2px rgba(var(--edge), 0.05),
+    0 8px 24px -12px rgba(var(--edge), 0.10);
   transition:
     box-shadow 0.25s ease,
     transform 0.25s ease,
@@ -74,9 +117,9 @@ h1, h2, h3 {
 a.rounded-2xl:hover,
 div.rounded-2xl:hover {
   box-shadow:
-    0 0 0 1px rgba(28, 25, 23, 0.04),
-    0 2px 4px rgba(28, 25, 23, 0.05),
-    0 16px 40px -16px rgba(28, 25, 23, 0.14);
+    0 0 0 1px rgba(var(--edge), 0.30),
+    0 2px 4px rgba(var(--edge), 0.06),
+    0 16px 40px -16px rgba(var(--edge), 0.18);
 }
 a.rounded-2xl:hover {
   transform: translateY(-2px);
@@ -102,9 +145,9 @@ button.rounded-full.bg-amber-500,
 button.rounded-full.bg-stone-900,
 a.rounded-full.bg-stone-900 {
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 1px 2px rgba(28, 25, 23, 0.2),
-    0 6px 16px -8px rgba(28, 25, 23, 0.35);
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 1px 2px rgba(var(--edge), 0.25),
+    0 6px 16px -8px rgba(var(--edge), 0.40);
 }
 
 /* ---------- inputs ---------- */
@@ -112,7 +155,7 @@ input, textarea, select {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 input:focus, textarea:focus {
-  box-shadow: 0 0 0 4px rgba(6, 95, 70, 0.08);
+  box-shadow: 0 0 0 4px rgba(87, 77, 118, 0.14);
 }
 
 /* ---------- motion ---------- */
