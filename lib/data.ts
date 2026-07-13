@@ -4,9 +4,21 @@ export type Category =
   | "HVAC"
   | "Appliance Repair"
   | "Cleaning"
+  | "Bathroom & Toilet Cleaning"
+  | "Gardening"
+  | "Landscaping"
+  | "Junk Removal"
+  | "Trash Collection"
+  | "Scrap Collection"
+  | "Pest Control"
+  | "Pool Care"
+  | "Pressure Washing"
+  | "Window Cleaning"
+  | "Gutter Cleaning"
+  | "Snow Removal"
+  | "Locksmith"
   | "Moving"
-  | "Handyman"
-  | "Landscaping";
+  | "Handyman";
 
 export const CATEGORIES: Category[] = [
   "Plumbing",
@@ -14,9 +26,21 @@ export const CATEGORIES: Category[] = [
   "HVAC",
   "Appliance Repair",
   "Cleaning",
+  "Bathroom & Toilet Cleaning",
+  "Gardening",
+  "Landscaping",
+  "Junk Removal",
+  "Trash Collection",
+  "Scrap Collection",
+  "Pest Control",
+  "Pool Care",
+  "Pressure Washing",
+  "Window Cleaning",
+  "Gutter Cleaning",
+  "Snow Removal",
+  "Locksmith",
   "Moving",
   "Handyman",
-  "Landscaping",
 ];
 
 export interface Provider {
@@ -198,9 +222,21 @@ export const CATEGORY_BASE: Record<Category, { min: number; max: number }> = {
   HVAC: { min: 110, max: 420 },
   "Appliance Repair": { min: 90, max: 260 },
   Cleaning: { min: 90, max: 220 },
+  "Bathroom & Toilet Cleaning": { min: 70, max: 160 },
+  Gardening: { min: 60, max: 180 },
+  Landscaping: { min: 70, max: 260 },
+  "Junk Removal": { min: 90, max: 320 },
+  "Trash Collection": { min: 25, max: 90 },
+  "Scrap Collection": { min: 30, max: 120 },
+  "Pest Control": { min: 80, max: 220 },
+  "Pool Care": { min: 80, max: 200 },
+  "Pressure Washing": { min: 120, max: 320 },
+  "Window Cleaning": { min: 90, max: 260 },
+  "Gutter Cleaning": { min: 100, max: 240 },
+  "Snow Removal": { min: 60, max: 200 },
+  Locksmith: { min: 70, max: 240 },
   Moving: { min: 180, max: 520 },
   Handyman: { min: 80, max: 240 },
-  Landscaping: { min: 70, max: 260 },
 };
 
 /* ---------- Home Passport ---------- */

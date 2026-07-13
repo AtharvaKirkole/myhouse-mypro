@@ -11,22 +11,21 @@ import { audit, requireAuth } from "./auth";
 import { validate, JobCreateSchema, BidCreateSchema, AcceptBidSchema, CompleteJobSchema } from "../core/validate";
 import { db, now, touch, uid, type JobRow } from "../db/store";
 import { createHold } from "./payments";
+import { classifierEntries, professionsFor, taxonomyByCluster } from "./taxonomy";
 
-/* appliance nouns first: "dishwasher not draining" is an appliance job even
-   though "drain" is a plumbing word — named equipment outranks symptoms */
-const CATEGORY_WORDS: [string, string[]][] = [
-  ["Appliance Repair", ["fridge", "refrigerator", "dishwasher", "washer", "dryer", "oven", "stove", "microwave"]],
-  ["Plumbing", ["leak", "pipe", "faucet", "drain", "toilet", "water heater", "clog"]],
-  ["Electrical", ["outlet", "breaker", "spark", "wiring", "panel", "no power"]],
-  ["HVAC", ["ac ", "air condition", "furnace", "no heat", "not cooling", "hvac", "compressor"]],
-];
-
+/*
+ * Classification reads the service taxonomy (categories are data, not code):
+ * score by hit count; ties resolve to the earlier taxonomy entry, whose
+ * ordering puts specific services before equipment before trades before
+ * generic cleaning — so "dishwasher not draining" is an appliance job even
+ * though "drain" is a plumbing word, and "toilet cleaning" is a cleaning job
+ * even though "toilet" is a plumbing word.
+ */
 export function structureJob(description: string): { title: string; category: string; urgency: string } {
   const t = ` ${description.toLowerCase()} `;
-  // score by hit count; ties resolve to the earlier (more specific) category
   let category = "Handyman";
   let best = 0;
-  for (const [name, words] of CATEGORY_WORDS) {
+  for (const [name, words] of classifierEntries()) {
     const hits = words.filter((w) => t.includes(w)).length;
     if (hits > best) {
       best = hits;
@@ -103,16 +102,19 @@ marketplaceRouter.post(
   }
 );
 
-/* pro job feed: open jobs (filtered by the pro's professions when set) */
+/* the full service taxonomy, grouped by cluster — categories are data */
+marketplaceRouter.get("/categories", (_req, res) => {
+  res.json(taxonomyByCluster());
+});
+
+/* pro job feed: open jobs routed via the taxonomy's category→profession map */
 marketplaceRouter.get("/jobs/feed", (req, res) => {
   const me = db.data.users.find((u) => u.id === req.userId);
   if (me?.accountType !== "pro") throw new ForbiddenError("pros_only");
-  const professions = me.proProfile?.professions ?? [];
+  const mine = (me.proProfile?.professions ?? []).map((p) => p.toLowerCase());
   const open = db.data.jobs.filter((j) => j.status === "open");
-  const matched = professions.length
-    ? open.filter((j) =>
-        professions.some((p) => j.category.toLowerCase().includes(p.toLowerCase().replace("plumber", "plumbing")))
-      )
+  const matched = mine.length
+    ? open.filter((j) => professionsFor(j.category).some((p) => mine.includes(p.toLowerCase())))
     : open;
   res.json(matched.length ? matched : open);
 });
