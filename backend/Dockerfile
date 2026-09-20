@@ -2,7 +2,7 @@
 # Multi-stage, non-root, health-checked production image.
 
 # ---- deps: full install for build/typecheck ----
-FROM node:22-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
@@ -14,13 +14,13 @@ COPY src ./src
 RUN npx tsc --noEmit
 
 # ---- prod-deps: runtime dependencies only ----
-FROM node:22-alpine AS prod-deps
+FROM node:25-alpine AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 # ---- runtime: minimal, non-root, health-checked ----
-FROM node:22-alpine AS runtime
+FROM node:25-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps /app/node_modules ./node_modules
